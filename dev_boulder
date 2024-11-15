@@ -27,10 +27,10 @@
 360   LBYTES name$,table+1024*count
 370 END FOR count
 380 DATA 14,10,23,11,22,16,20,25,19,15,24,12,13,21,17,18
-390 LBYTES dev$ & "uqlx_boulder2_c",addr
+390 LBYTES dev$ & "dev_boulder2_c",addr
 400 LBYTES dev$ & "boulder1_grap",grap
 410 LBYTES dev$ & "text_grap",text
-420 SBYTES dev$ & "boulder_full",addr, total_size
+420 SBYTES dev$ & "Rockfall_code",addr, total_size
 430 MODE 8: CLS
 440 END DEFine Set_up
 450 :
