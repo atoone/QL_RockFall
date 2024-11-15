@@ -1,0 +1,44 @@
+100 dev$ = "win2_"
+110 code_size = 6000
+120 graph_size = 8800
+130 text_size = 5510
+140 total_size = code_size+graph_size+text_size+(16*1024)
+150 Set_up
+160 REPeat loop
+170 Thing
+180 INPUT "Again?";ans$
+190 IF ans$<>"Y" AND ans$<>"y" THEN EXIT loop
+200 END REPeat loop
+210 MODE 4
+220 CLS
+230 PRINT "Table, graph, text = "&(code_size+graph_size+text_size)&", "&code_size&", "&(code_size+graph_size)
+240 PRINT "Total size = "&total_size
+250 Quit
+260 STOP
+270 DEFine PROCedure Set_up
+280 addr=  ALCHP(total_size)
+290 grap=  addr+code_size
+300 text=  grap+graph_size
+310 table= text+text_size
+320 RESTORE 380
+330 FOR count=0 TO 15
+340   READ scr_num
+350   name$=dev$ & "boulder_cave"&scr_num
+360   LBYTES name$,table+1024*count
+370 END FOR count
+380 DATA 14,10,23,11,22,16,20,25,19,15,24,12,13,21,17,18
+390 LBYTES dev$ & "uqlx_boulder2_c",addr
+400 LBYTES dev$ & "boulder1_grap",grap
+410 LBYTES dev$ & "text_grap",text
+420 SBYTES dev$ & "boulder_full",addr, total_size
+430 MODE 8: CLS
+440 END DEFine Set_up
+450 :
+460 DEFine PROCedure Quit
+470 RECHP addr
+480 END DEFine Quit
+490 :
+500 DEFine PROCedure Thing
+510 CALL addr,4,table,grap,text
+520 l=KEYROW(0)
+530 END DEFine Thing

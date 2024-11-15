@@ -1,0 +1,10 @@
+100 REMark Rock-Fall Loader
+110 REMark 1991/2 A.Toone
+120 REMark 
+130 MODE 8
+140 addr=RESPR(36500)
+150 LBYTES flp1_RockFall_code,addr
+160 CALL addr,4,addr+20310,addr+6000,addr+14800
+170 l=KEYROW(0)
+180 CLS
+190 NEW

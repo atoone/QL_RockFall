@@ -1,0 +1,152 @@
+10 CLS
+20 Init
+30 Ed_map
+35 Quit
+40 STOP
+1000 REMark Map editor Vers 2.0
+1010 REMark 
+1020 :
+1030 DEFine PROCedure Init
+1040 addr= ALCHP(4100) : LBYTES 'flp1_Boulder_c',addr
+1050 tabl= ALCHP(1100) : LBYTES 'flp1_Boulder_cave2',tabl
+1060 grap= ALCHP(8200) : LBYTES 'flp1_Boulder1_grap',grap
+1070 text= ALCHP(6000) : LBYTES 'flp1_text_grap',text
+1080 WINDOW 512,240,0,0: MODE 8: CLS
+1090 DIM disp(12,2)
+1100 RESTORE 1140
+1110 FOR f=1 TO 12
+1120   READ disp(f,1),disp(f,2)
+1130 END FOR f
+1140 DATA 0,0, 2,0, 6,0, 5,0, 2,2, 2,1, 7,1, 0,0, 4,1, 1,1, 5,2, 4,0
+1150 END DEFine Init
+1160 :
+1170 DEFine PROCedure Quit
+1180 RECHP addr
+1190 RECHP tabl
+1200 RECHP grap
+1210 RECHP text
+1220 MODE 4: CLS
+1230 END DEFine Quit
+1240 :
+1250 DEFine PROCedure Show
+1260 FOR f=0 TO 31
+1270   FOR g=0 TO 31
+1280     object f,g,PEEK(tabl+f+32*g)
+1290   END FOR g
+1300 END FOR f
+1310 END DEFine Show
+1320 :
+1330 DEFine PROCedure object(v,w,obj)
+1340 type= Trans (obj)
+1345 IF w<1 THEN type=4
+1350 col=disp(type,1)
+1360 how=disp(type,2)
+1370 BLOCK 10,5,32+10*v,16+5*w,0
+1380 SELect ON how
+1390  = 0: BLOCK 10,5,32+10*v,16+5*w,col
+1400  = 1: BLOCK 10,3,32+10*v,17+5*w,col
+1410       BLOCK 6,5,34+10*v,16+5*w,col
+1420  = 2: BLOCK 6,3,34+10*v,17+5*w,col
+1430 END SELect 
+1440 END DEFine object
+1450 :
+1460 DEFine FuNction Trans( value )
+1470 value=value MOD 40
+1480 IF value<8 THEN RETurn (value+1)
+1490 RETurn (9+(value-8) DIV 4)
+1500 END DEFine Trans
+1510 :
+1520 DEFine PROCedure Ed_map
+1530 CLS
+1540 Show
+1550 x=0: y=0: warp=0
+1560 thing=0
+1570 Get_Dis
+1595 Display
+1600 REPeat ed_loop
+1610   CALL addr,1,16,0,grap+128*thing
+1620   AT 0,20: PRINT "X:";x;"  "
+1630   AT 0,28: PRINT "Y:";y;"  "
+1640   REPeat ed_key
+1645     temp$=INKEY$(2)
+1650     temp=KEYROW(1)
+1660     BLOCK 10,5,32+10*x,16+5*y,warp+4
+1670     IF temp <> 0 THEN EXIT ed_key
+1675     IF temp$<>"" THEN 
+1677       sid=CODE(temp$)
+1678       SELect ON sid
+1679       =115:  start_x = x-show_x : start_y = y-show_y
+1690              POKE tabl,start_x: POKE tabl+1,start_y
+1700              Display
+1710       =120:  exit_x = x: exit_y = y
+1715              POKE tabl+6,exit_x: POKE tabl+7,exit_y
+1717              Display
+1720       =119:  show_x = Inp( "Show x value :" )
+1730              show_y = Inp( "Show y value :" )
+1740              POKE tabl+2,show_x: POKE tabl+3,show_y
+1750              Display
+1770       =100:  diamonds= Inp( "Diamonds :" )
+1780              POKE tabl+4,diamonds
+1785              Display
+1790       =116:  time = Inp( "Time :" )
+1795              POKE tabl+5,time
+1805              Display
+1810       =118:  number= Inp( "Save screen number :" )
+1820              name$="flp1_Boulder_cave"&number
+1825              IF DEVICE_STATUS( 2,name$ )>=1024 THEN 
+1830                SBYTES name$,tabl,1024
+1840              ELSE 
+1850                AT 21,3: PRINT "Can't save file"
+1860              END IF 
+1865       =103:  graphics = Inp( "Graphics number :" )&&3
+1867              POKE tabl+8,graphics
+1868              Display
+1870       =108:  number= Inp( "Load screen number :" )
+1880              name$="flp1_Boulder_cave"&number
+1890              IF DEVICE_STATUS( 1,name$ )>=0 THEN 
+1897                LBYTES name$,tabl
+1899                CLS: Show: Get_Dis: Display
+1901              ELSE 
+1903                AT 21,3: PRINT "Can't load"
+1904              END IF 
+1905       END SELect 
+1915     END IF 
+2000     warp=(warp+1)MOD 4
+2010   END REPeat ed_key
+2020   locn=tabl+x+32*y
+2030   IF temp&&64 THEN POKE locn,thing
+2040   object x,y,PEEK(locn)
+2045   IF temp &&8 THEN EXIT ed_loop
+2050   IF temp&&2 THEN x=x-(x>0)
+2060   IF temp&&16 THEN x=x+(x<31)
+2070   IF temp&&4 THEN y=y-(y>0)
+2080   IF temp&&128 THEN y=y+(y<31)
+2090   IF temp&&1 THEN thing=thing+(thing<8)+4*(thing>7)
+2100   IF thing>=24 THEN thing=0
+2110   CALL addr,1,20,0,grap+128*PEEK(tabl+x+32*y)
+2120 END REPeat ed_loop
+2125 END DEFine Ed_map
+2130 :
+2140 DEFine FuNction Inp( prompt$ )
+2150 AT 21,0: PRINT "                                "
+2160 AT 21,3: PRINT prompt$;
+2170 INPUT a_value
+2180 AT 21,0: PRINT "                                "
+2190 RETurn a_value
+2200 END DEFine Inp
+2210 :
+2220 DEFine PROCedure Display
+3620 AT 18,3: PRINT "Start x,y :";start_x+show_x;",";start_y+show_y!!!!
+3630 AT 18,20: PRINT "shoW  x,y :";show_x;",";show_y!!!!
+3631 AT 19,3: PRINT "Exit x,y :";exit_x;",";exit_y!!!!
+3632 AT 19,20: PRINT "Graphics :";graphics
+3635 AT 20,3: PRINT "Diamonds :";diamonds!!!"Time :";time!!!
+3642 END DEFine Display
+3652 :
+3662 DEFine PROCedure Get_Dis
+5570 start_x=PEEK(tabl): start_y=PEEK(tabl+1)
+5580 show_x=PEEK(tabl+2): show_y=PEEK(tabl+3)
+5590 diamonds=PEEK(tabl+4): time=PEEK(tabl+5)
+5592 exit_x=PEEK(tabl+6): exit_y=PEEK(tabl+7)
+5593 graphics=PEEK(tabl+8)
+5603 END DEFine Get_Dis
