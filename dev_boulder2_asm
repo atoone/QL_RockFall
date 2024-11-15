@@ -1,0 +1,1556 @@
+*--------------------------------------*
+* Graphic routines                     *
+*                                      *
+* By           Andrew Toone            *
+* Version      1.20                    *
+* Last Update  26/1/19                 *
+*                                      *
+* Copyright 1991/2019 Andrew Toone     *
+*--------------------------------------*
+
+screen         equ   $20000      * Screen base address
+
+*--------------------------------------------------------------------------*
+* Start  - Chooses a suitable routine from d1.w
+*   d1 - Option to run
+*           0 = Get Block
+*           1 = Put Block
+*           2 = Do Screen
+*           3 = Gravity
+*           4 = Menu
+
+Start          andi.w      #7,d1
+               lsl.w       #2,d1
+               jsr         options(d1.w)
+finish         move.l      #$0,d0
+               rts
+
+options        jmp         get_block
+               jmp         put_block
+               jmp         do_screen
+               jmp         gravity
+               jmp         menu
+
+*--------------------------------------------------------------------------*
+* Get_block  - Gets a 16x16 block from screen into memory
+*              d2.b = X      d4.l = address in memory
+*              d3.b = Y
+*
+
+get_block      jsr         calc_scr
+               moveq       #7,d0
+               move.l      #128,d1
+               movea.l     d4,a0
+gb_loop        move.l      (a1)+,(a0)+
+               move.l      (a1),(a0)+
+               adda.l      d1,a1
+               move.l      (a1),(a0)+
+               move.l      -(a1),(a0)+
+               adda.l      d1,a1
+               dbf         d0,gb_loop
+               rts
+
+*--------------------------------------------------------------------------*
+* Put_block  - Puts a block back onto screen from memory
+*              d2.b = X     d4.l = address in memory
+*              d3.b = Y
+*
+
+put_block      jsr         calc_scr
+               moveq       #7,d0
+               move.l      #128,d1
+               movea.l     d4,a0
+pb_loop        move.l      (a0)+,(a1)+
+               move.l      (a0)+,(a1)
+               adda.l      d1,a1
+               move.l      (a0)+,(a1)
+               move.l      (a0)+,-(a1)
+               adda.l      d1,a1
+               dbf         d0,pb_loop
+               rts
+
+*--------------------------------------------------------------------------*
+* Calc_scr  - Calculates a screen address from an X and Y co-ordinate
+*             d2.b = X  0-64
+*             d3.b = Y  0-119
+*   Returns - a1 = Screen location
+*
+
+calc_scr       andi.l   #63,d2
+               andi.l   #127,d3
+               cmpi.b   #119,d3
+               ble      calc_ok
+               move.b   #0,d3
+calc_ok        movea.l  #screen,a1
+               lsl.b    #1,d2
+               move.b   #8,d0
+               lsl.w    d0,d3
+               adda.l   d2,a1
+               adda.l   d3,a1
+               rts
+
+
+*--------------------------------------------------------------------------*
+* Do_screen  - Copy 16*14 sprites onto screen from table
+*              d2.w = Start address in 32x32 table
+*              d3.w = Address of graphic data
+*
+
+Do_screen      movea.l  d2,a2
+               movea.l  d3,a3
+               movea.w  d4,a4
+               move.w   #0,d5
+ds_loop1       move.w   #0,d6
+ds_loop2       move.w   d6,d2
+               addq.w   #1,d2
+               lsl.w    #2,d2
+               move.w   d5,d3
+               addq.w   #1,d3
+               lsl.w    #3,d3
+               move.w   d5,d7
+               lsl.w    #5,d7
+               add.l    d6,d7
+               clr.l    d4
+               move.b   0(a2,d7.w),d4
+               move.b   d4,d7
+               andi.b   #%00111000,d7
+               beq      ds_not_anim
+               andi.b   #%00111100,d4
+               move.w   a4,d7
+               or.b     d7,d4
+ds_not_anim    andi.b   #%00111111,d4
+               lsl.w    #7,d4
+               add.l    a3,d4
+               jsr      put_block
+               addq.w   #1,d6
+               cmpi.w   #14,d6
+               bne      ds_loop2
+               addq.w   #1,d5
+               cmpi.w   #12,d5
+               bne      ds_loop1
+               rts
+
+*--------------------------------------------------------------------------*
+* Gravity  - Move,explode and generally update the table
+*            d2.l = address of table start
+*
+
+gravity        movea.l  d2,a0
+               move.w   #991,d1     * d1.w  = table offset
+g_loop         move.w   d1,d7
+               jsr      whats_at
+               cmpi.b   #4,d7       * Is it a rock?
+               beq      fall
+               blt      g_do_loop
+               cmpi.b   #16,d7      * A diamond?
+               beq      fall
+               cmpi.b   #7,d7       * An explosion
+               bne      g_onwards
+               bclr     #6,d6
+               beq      g_exnorm
+               move.b   d6,0(a0,d1.w)
+               bra      g_do_loop
+g_exnorm       bclr     #7,d6
+               beq      g_wipe
+               move.b   d6,0(a0,d1.w)
+               bra      g_do_loop
+g_wipe         clr.b    0(a0,d1.w)
+               bra      g_do_loop
+g_onwards      cmpi.b   #$11,d7     * A wheel
+               beq      move_creature
+               cmpi.b   #$12,d7     * A spring
+               beq      move_creature
+               cmpi.b   #$13,d7
+               beq      splodge     * A uhh... a.. well, a splodge
+               cmpi.b   #5,d7
+               beq      spand       * An expanding wall
+g_do_loop      subq.w   #1,d1
+               cmpi.w   #32,d1
+               bne      g_loop
+               rts
+
+*--------------------------------------------------------------------------*
+* Spand - Makes expanding walls work
+*
+*
+
+spand          tst.b    1(a0,d1.w)
+               bne      s_try_l
+               move.b   #5,1(a0,d1.w)
+               move.b   #1,63(a5)      * Flag for noise
+s_try_l        tst.b    -1(a0,d1.w)
+               bne      g_do_loop
+               move.b   #5,-1(a0,d1.w)
+               subq.w   #1,d1
+               move.b   #1,63(a5)      * Flag for noise
+               bra      g_do_loop
+
+*--------------------------------------------------------------------------*
+* Splodge  - does splodge type stuff
+*
+
+splodge        tst.b    45(a5)
+               beq      sp_move
+               move.b   45(a5),0(a0,d1.w)
+               bra      g_do_loop
+sp_move        addi.w   #1,42(a5)   * Splodge count
+               move.b   #1,65(a5)   * Flag for noise
+               clr.b    d3
+               move.b   #2,d4
+               move.b   -$20(a0,d1.w),d2
+               or.b     d4,d2
+               cmp.b    d4,d2
+               bne      sp_down
+               ori.b    #1,d3
+sp_down        move.b   $20(a0,d1.w),d2
+               or.b     d4,d2
+               cmp.b    d4,d2
+               bne      sp_left
+               ori.b    #2,d3
+sp_left        move.b   -1(a0,d1.w),d2
+               or.b     d4,d2
+               cmp.b    d4,d2
+               bne      sp_right
+               ori.b    #4,d3
+sp_right       move.b   1(a0,d1.w),d2
+               or.b     d4,d2
+               cmp.b    d4,d2
+               bne      sp_choose
+               ori.b    #8,d3
+sp_choose      or.b     d3,44(a5)
+               tst.b    d3
+               beq      g_do_loop
+               subi.b   #1,52(a5)
+               bne      g_do_loop
+               jsr      random
+               lsl.w    #2,d7
+               andi.b   #63,d7
+               move.b   d7,52(a5)
+sp_decide      move.b   d7,d2
+               andi.w   #3,d7
+               btst     d7,d3
+               beq      sp_next
+               lsl.w    #2,d7
+               jsr      sp_jmptab(d7.w)
+               bra      g_do_loop
+sp_next        move.b   d2,d7
+               addq.b   #1,d7
+               bra      sp_decide
+
+sm_up          move.b   #20,-$20(a0,d1.w)
+               rts
+
+sm_down        move.b   #20,$20(a0,d1.w)
+               rts
+
+sm_left        move.b   #20,-$1(a0,d1.w)
+               rts
+
+sm_right       move.b   #20,$1(a0,d1.w)
+               rts
+
+sp_jmptab      jmp      sm_up
+               jmp      sm_down
+               jmp      sm_left
+               jmp      sm_right
+
+*--------------------------------------------------------------------------*
+* move_creature  - Moves a creature (!)
+*
+
+move_creature  move.b   -1(a0,d1.w),d5
+               andi.b   #63,d5
+               cmpi.b   #$13,d5
+               bgt      mc_bang
+               move.b   1(a0,d1.w),d5
+               andi.b   #63,d5
+               cmpi.b   #$13,d5
+               bgt      mc_bang
+               move.b   $20(a0,d1.w),d5
+               andi.b   #63,d5
+               cmpi.b   #$13,d5
+               bgt      mc_bang
+               move.b   -$20(a0,d1.w),d5
+               andi.b   #127,d5
+               bclr     #6,d5
+               beq      mc_drop
+               cmpi.b   #4,d5
+               beq      mc_bang
+               andi.b   #60,d5
+               cmpi.b   #8,d5
+               beq      mc_bang
+mc_drop        cmpi.b   #$13,d5
+               bgt      mc_bang
+               move.b   #5,d4
+               move.b   d6,d5
+               andi.b   #$3f,d5
+               btst     #7,d6
+               bne      mc_updown
+               btst     #6,d6
+               bne      mc_right
+mc_left        tst.b    -$20(a0,d1.w)
+               beq      mc_up1
+               tst.b    -1(a0,d1.w)
+               bne      ml_blocked
+mc_left1       clr.b    0(a0,d1.w)
+               move.b   d5,-1(a0,d1.w)
+               subq.w   #1,d1
+               cmpi.w   #$1f,d1
+               bne      g_do_loop
+               rts
+mc_right       tst.b    $20(a0,d1.w)
+               beq      mc_down1
+               tst.b    $1(a0,d1.w)
+               bne      ml_blocked
+mu_right1      ori.b    #$40,d5
+               clr.b    0(a0,d1.w)
+               move.b   d5,1(a0,d1.w)
+               bra      g_do_loop
+mc_updown      btst     #6,d6
+               beq      mc_up
+mc_down        tst.b    -$1(a0,d1.w)
+               beq      mc_left1
+               tst.b    $20(a0,d1.w)
+               bne      mu_blocked
+mc_down1       ori.b    #$c0,d5
+               clr.b    0(a0,d1.w)
+               move.b   d5,$20(a0,d1.w)
+               bra      g_do_loop
+mc_up          btst     #1,d5
+               beq      mu_move
+               bclr     #1,0(a0,d1.w)
+               bra      g_do_loop
+mc_up1         btst     #1,d5
+               beq      mu_ujoin
+               bclr     #1,0(a0,d1.w)
+               bra      g_do_loop
+mu_move        tst.b    $1(a0,d1.w)
+               beq      mu_right1
+               tst.b    -$20(a0,d1.w)
+               bne      mu_blocked
+mu_ujoin       ori.b    #$82,d5
+               clr.b    0(a0,d1.w)
+               move.b   d5,-$20(a0,d1.w)
+               bra      g_do_loop
+ml_blocked     subq.b   #1,d4
+               beq      g_do_loop
+               tst.b    $20(a0,d1.w)
+               beq      mc_down
+               subq.b   #1,d4
+               beq      g_do_loop
+               tst.b    -$20(a0,d1.w)
+               beq      mc_up
+mu_blocked     subq.b   #1,d4
+               beq      g_do_loop
+               tst.b    $1(a0,d1.w)
+               beq      mc_right
+               subq.b   #1,d4
+               beq      g_do_loop
+               tst.b    -$1(a0,d1.w)
+               beq      mc_left
+               bra      ml_blocked
+
+mc_bang        move.b   #$87,d2
+               cmpi.b   #18,d7
+               bne      mc_bgo
+               move.b   #8,d2
+mc_bgo         move.w   d1,d7
+               jsr      xplo
+               move.w   d1,d7
+               add.w    #$20,d7
+               jsr      xplo
+               ori.b    #$40,d2
+               move.w   d1,d7
+               sub.w    #$20,d7
+               jsr      xplo
+               bra      f_fix
+
+*--------------------------------------------------------------------------*
+* Fall  - makes an object fall (!)
+*
+
+fall           move.b   d6,d5       * store byte
+               move.l   d1,d7
+               addi.w   #$20,d7
+               move.w   d7,d4
+               jsr      whats_at
+               tst.b    d7          * Space below?
+               bne      f_no_space
+               bset     #$6,d5      * It's falling
+               move.b   d5,0(a0,d4.w)
+               clr.b    0(a0,d1.w)
+               bra      f_noise
+
+f_no_space     bclr     #$6,d5
+               beq      f_sides    * It isn't falling
+               cmpi.b   #16,d7
+               bgt      f_might
+f_stop         move.b   d5,0(a0,d1.w)
+               bra      f_sides
+f_might        cmpi.b   #19,d7
+               beq      f_stop
+               move.b   #$87,d2     * An explosion
+               cmpi.b   #18,d7
+               bne      f_bang
+               move.b   #8,d2       * Make explosion into diamonds
+f_bang         move.w   d1,d7
+               jsr      xplo
+               move.w   d4,d7
+               jsr      xplo
+               move.w   d4,d7
+               add.w    #$20,d7
+               jsr      xplo
+               bra      f_fix
+
+f_sides        cmpi.b   #$10,d7      * Only fall off diamonds,
+               beq      f_sgo
+               cmpi.b   #$4,d7       * Rocks,
+               beq      f_sgo
+               cmpi.b   #$1,d7       * and walls.
+               bne      g_do_loop
+f_sgo          clr.w    d2
+               move.w   d1,d7
+               addq.w   #1,d7
+               jsr      whats_at
+               tst.b    d7
+               bne      f_left
+               move.w   d4,d7
+               addq.w   #$1,d7
+               jsr      whats_at
+               tst.b    d7
+               bne      f_left
+               ori.b    #$1,d2
+f_left         move.w   d1,d7
+               subq.w   #1,d7
+               jsr      whats_at
+               tst.b    d7
+               bne      f_decide
+               move.w   d4,d7
+               subq.w   #$1,d7
+               jsr      whats_at
+               tst.b    d7
+               bne      f_decide
+               ori.b    #$2,d2
+f_decide       tst.b    d2
+               beq      g_do_loop
+               bset     #$6,d5      * Set falling flag
+               move.w   d1,d7
+               cmpi.b   #$2,d2
+               bgt      f_either
+               andi.b   #$2,d2
+               beq      fall_right
+fall_left      subq.w   #1,d7
+               move.b   d5,0(a0,d7.w)
+               clr.b    0(a0,d1.w)
+f_fix          subq.w   #1,d1
+               cmpi.w   #$20,d1
+               bne      f_noise
+               rts
+f_either       lea.l    fall_flag,a1
+               move.l   (a1),d3
+               lsr.l    #1,d3
+               move.l   d3,(a1)
+               btst     #$0,d3
+               beq      fall_left
+fall_right     addq.w   #1,d7
+               move.b   d5,0(a0,d7.w)
+               clr.b    0(a0,d1.w)
+
+f_noise        move.b   #1,62(a5)      * Flag for noise
+               andi.b   #$3f,d5
+               cmpi.b   #4,d5
+               bne      g_do_loop
+               clr.b    62(a5)
+               move.b   #1,63(a5)
+               bra      g_do_loop
+
+fall_flag      dc.l  $1573cdc5
+
+xplo           jsr      xplo_1
+               addq.w   #1,d7
+               jsr      xplo_1
+               subq.w   #2,d7
+xplo_1         move.w   d7,d3
+               jsr      whats_at
+               cmpi.b   #3,d7
+               bne      x_cont
+               move.w   d3,d7
+               rts
+x_cont         cmpi.b   #6,d7
+               bne      x_cont1
+               move.w   d3,d7
+               rts
+x_cont1        move.w   d3,d7
+               move.b   d2,0(a0,d3.w)
+               rts
+
+*--------------------------------------------------------------------------*
+* Whats_at  - tells us what is at the table location given to us
+*             d7.w = Offset in table    a0.l = table address
+*     Exit:   d7 = object type         d6=byte at locn.
+*
+
+whats_at       move.b   0(a0,d7.w),d6
+               move.b   d6,d7
+               andi.b   #$38,d7
+               bne      wa_object
+               move.b   d6,d7
+               andi.b   #7,d7
+               rts
+wa_object      move.b   d6,d7
+               andi.b   #$3c,d7
+               lsr.b    #2,d7
+               subq.b   #2,d7
+               ori.b    #$10,d7
+               rts
+
+*--------------------------------------------------------------------------*
+* Set_at  - the reverse of whats_at, sets a location in the table to a value
+*           d7.w = offset in table (preserved)  a0.l = table address
+*           d6.b = data (not preserved)
+*    Uses   d5
+
+set_at         move.b   d6,0(a0,d7.w)
+               btst     #4,d6
+               bne      sa_shift
+               rts
+sa_shift       andi.b   #192,0(a0,d7.w)
+               lsl.b    #2,d6
+               andi.b   #60,d6
+               or.b     d6,0(a0,d7.w)
+               rts
+
+
+*==========================================================================*
+data_space     ds.l  20
+*
+* 0    - Screen X
+* 1    - Screen Y
+* 2    - Show X
+* 3    - Show Y
+* 4    - Keyrow(1)
+* 5    - Lives
+* 6.w  - Score
+table_off  equ 8     * 8.l  - Table address
+* 12.l - Graphics address
+* 16.l > Temp addresses
+* 20.l >
+* 24.l - Offset table address for show
+* 28.l - Address of man in table
+* 32   - Animation stage
+* 33   - Death flag
+* 34.w - Random seed
+* 36.l - Text graphics address
+* 40.b - Diamonds to go
+* 41.b - Time
+* 42.w - Splodge existance flag
+* 44.b - Splodge surrounded flag
+* 45.b - Splodge destroyed flag
+* 46.l - Map area start address
+level_off      equ 50      * 50.b - Level
+pause_off      equ 51      * 51.b - Pause at start of screen
+* 52.b - Splodge growth flag
+* 53.b - End of level flag
+* 54.b - X value of secret exit - or zero if there isn't one
+* 55.b - Y value of secret exit
+* 56.b - High score entry byte
+* 57.b - Score for diamonds
+* 58.b - Flag for adding lives
+* 59.b - Flag for exit bar
+* 60.l - Sound flags
+* 64.w -   "     "
+* 66.b - Sound on/off flag
+* 67.b - Spare
+* 68.w - Level bits
+timer_off      equ 70      * 70.l - Interrupt timer counter
+game_time_off  equ 74      * 74.l - Game time
+time_delay_off equ 78      * 78.b - Delay for time
+
+keybd          ds.b  8
+
+frames_per_sec equ   55
+
+*--------------------------------------------------------------------------*
+* Game_start
+*
+
+game_start     move.b   #3,5(a5)          * 3 Lives
+               clr.w    6(a5)             * Zero score
+               clr.w    68(a5)            * No levels done
+               clr.b    58(a5)
+game_init      clr.l    d1
+               move.b   level_off(a5),d1  * Get level
+               mulu     #1024,d1
+               add.l    46(a5),d1
+               movea.l  d1,a0
+               move.l   (a0),(a5)         * X, Y start. X,Y show
+               move.w   4(a0),40(a5)      * Diamonds, Time
+               move.w   6(a0),54(a5)      * Secret exit X,Y
+               move.b   10(a0),57(a5)     * Diamond score
+               clr.b    53(a5)            * Level finished flag
+               clr.l    d1
+               move.b   8(a0),d1          * Graphics type
+               andi.b   #3,d1
+               lsl.w    #2,d1
+               addi.b   #44,d1
+               lsl.w    #7,d1
+               movea.l  12(a5),a1
+               movea.l  a1,a2
+               adda.l   d1,a1
+               adda.l   #128,a2
+               move.w   #127,d1
+gi_gloop       move.l   (a1)+,(a2)+       * Copy graphic stuff around
+               dbf      d1,gi_gloop
+
+               movea.l  table_off(a5),a1  * Copy level data into workspace
+               move.w   #255,d1
+gi_loop        move.l   (a0)+,(a1)+
+               dbf      d1,gi_loop
+
+               movea.l  8(a5),a1          * Delete special information
+               movea.l  a1,a2             * stored at start of map
+               move.w   #12,d1
+gi_rloop       move.b   9(a1),(a2)+
+               dbf      d1,gi_rloop
+
+               clr.b    33(a5)            * Don't die
+               clr.b    45(a5)            * Keep splodge
+               move.b   #32,52(a5)        * Splodge growth thingy
+               move.b   #8,pause_off(a5)  * Wait to start
+               clr.b    59(a5)            * No exit bar
+
+               jsr      clear_screen
+               lea      ready_mess,a2
+               jsr      do_message
+               jsr      wait_key
+               jsr      disp_lives
+               jsr      gl_score
+
+               clr.l    timer_off(a5)
+               clr.l    game_time_off(a5)
+               clr.b    time_delay_off(a5)
+
+game_loop      addi.l   #8,game_time_off(a5)
+game_delay     jsr      gl_time
+               move.l   game_time_off(a5),d2
+               cmp.l    timer_off(a5),d2
+               bgt      game_delay
+
+               clr.w    42(a5)
+               clr.b    44(a5)
+               move.l   8(a5),d2     * Make things move
+               jsr      gravity
+               tst.w    42(a5)
+               beq      gl_next
+               tst.b    44(a5)
+               bne      gl_nosurr
+               move.b   #8,45(a5)
+               bra      gl_next
+gl_nosurr      cmpi.w   #200,42(a5)
+               blt      gl_next
+               move.b   #4,45(a5)
+               
+gl_next        jsr      gl_calc      * Display them
+               move.l   d2,24(a5)
+               move.l   12(a5),d3
+               addq.b   #1,32(a5)
+               move.b   32(a5),d4
+               andi.b   #$3,d4
+               jsr      do_screen
+
+               jsr      gl_score     * And the score
+               jsr      gl_diamon
+
+               tst.b    40(a5)
+               bne      gl_chk_level
+               tst.b    59(a5)
+               bne      gl_chk_level
+               move.b   #$ff,59(a5)
+               move.b   #1,60(a5)    * Flag for noise
+               lea      fini_mess,a2
+               jsr      do_message
+
+gl_chk_level   tst.b    53(a5)       * Level done?
+               bne      done_level
+
+               jsr      sounds       * Make noises
+
+               jsr      test_key
+               move.b   d1,4(a5)
+               btst     #3,d1
+               bne      gl_dead
+               clr.l    d7
+               move.b   1(a5),d7
+               lsl.w    #5,d7
+               add.b    0(a5),d7
+               add.l    24(a5),d7      * Location of Man on screen
+               move.l   d7,28(a5)
+               move.l   d7,a0
+
+               tst.b    41(a5)
+               bne      gl_ages
+               move.b   #$8,(a0)
+
+gl_ages        clr.w    d7
+               jsr      whats_at
+               cmpi.b   #$10,d7        * Diamonds?
+               beq      gl_die
+               cmpi.b   #$07,d7        * Explosion?
+               bne      gl_alive
+               
+gl_die         tst.b    33(a5)
+               bne      gl_alive
+               move.b   #12,33(a5)
+
+gl_alive       tst.b    33(a5)
+               beq      gl_pause
+               subi.b   #1,33(a5)
+               beq      gl_dead
+               bra      gl_do_loop
+gl_pause       tst.b    pause_off(a5)  * Wait to start level
+               beq      gl_test_p
+               subi.b   #1,pause_off(a5)
+               bne      gl_do_loop
+               move.b   #$20,(a0)
+
+gl_test_p      btst     #0,d1          * Pause key?
+               beq      gl_test_f
+               jsr      wait_key
+               move.l   timer_off(a5),d2
+               move.l   d2,game_time_off(a5)
+
+gl_test_f      btst     #6,d1          * Fire key?
+               beq      gl_test_r
+
+               btst     #4,d1          * If yes then consume
+               beq      gl_teat_l      * without moving
+               move.b   1(a0),d2
+               btst     #6,d2
+               bne      gl_teat_l
+               jsr      gl_test
+               bne      gl_teat_l
+               clr.b    1(a0)
+               bra      gl_do_noise
+
+gl_teat_l      btst     #1,d1
+               beq      gl_teat_u
+               move.b   -1(a0),d2
+               btst     #6,d2
+               bne      gl_teat_u
+               jsr      gl_test
+               bne      gl_teat_u
+               clr.b    -1(a0)
+               bra      gl_do_noise
+
+gl_teat_u      btst     #2,d1
+               beq      gl_teat_d
+               move.b   -$20(a0),d2
+               btst     #6,d2
+               bne      gl_teat_d
+               jsr      gl_test
+               bne      gl_teat_d
+               clr.b    -$20(a0)
+               bra      gl_do_noise
+
+gl_teat_d      btst     #7,d1
+               beq      gl_do_loop
+               move.b   $20(a0),d2
+               btst     #6,d2
+               bne      gl_do_loop
+               jsr      gl_test
+               bne      gl_do_loop
+               clr.b    $20(a0)
+               bra      gl_do_noise
+
+gl_test_r      btst     #4,d1          * Moving right?
+               beq      gl_test_l
+               move.b   1(a0),d2
+               jsr      gl_test
+               bne      gl_push_r
+gl_tr_join     cmpi.b   #13,0(a5)
+               beq      gl_do_loop
+               move.b   #$18,1(a0)
+               clr.b    (a0)
+               addi.b   #1,0(a5)
+               bra      gl_do_noise
+gl_push_r      move.b   32(a5),d2
+               andi.b   #3,d2
+               bne      gl_test_l
+               move.b   1(a0),d2
+               andi.b   #$3f,d2
+               cmpi.b   #4,d2
+               bne      gl_test_l
+               move.b   2(a0),d2
+               andi.b   #$3f,d2
+               bne      gl_test_l
+               move.b   #4,2(a0)
+               bra      gl_tr_join
+
+gl_test_l      btst     #1,d1
+               beq      gl_test_u
+               move.b   -1(a0),d2
+               jsr      gl_test
+               bne      gl_push_l
+gl_tl_join     cmpi.b   #1,0(a5)
+               beq      gl_do_loop
+               move.b   #$1c,-1(a0)
+               clr.b    (a0)
+               subi.b   #1,0(a5)
+               bra      gl_do_noise
+gl_push_l      move.b   32(a5),d2
+               andi.b   #3,d2
+               bne      gl_test_u
+               move.b   -1(a0),d2
+               andi.b   #$3f,d2
+               cmpi.b   #4,d2
+               bne      gl_test_u
+               move.b   -2(a0),d2
+               andi.b   #$3f,d2
+               bne      gl_test_u
+               move.b   #4,-2(a0)
+               bra      gl_tl_join
+
+gl_test_u      btst     #2,d1
+               beq      gl_test_d
+               move.b   -$20(a0),d2
+               jsr      gl_test
+               bne      gl_test_d
+               cmpi.b   #1,1(a5)
+               beq      gl_do_loop
+               move.b   #$28,-$20(a0)
+               clr.b    (a0)
+               subi.b   #1,1(a5)
+               bra      gl_do_noise
+
+gl_test_d      btst     #7,d1
+               beq      gl_still
+               move.b   $20(a0),d2
+               jsr      gl_test
+               bne      gl_still
+               cmpi.b   #11,1(a5)
+               beq      gl_do_loop
+               move.b   #$24,$20(a0)
+               clr.b    (a0)
+               addi.b   #1,1(a5)
+
+gl_do_noise    move.b   #1,64(a5)
+               bra      gl_do_loop
+
+gl_still       move.b   #$20,(a0)
+gl_do_loop     move.b   32(a5),d3
+               andi.b   #3,d3
+               cmpi.b   #2,0(a5)
+               blt      gl_sc_left
+               cmpi.b   #3,0(a5)
+               bgt      gl_s_right
+               tst.b    d3
+               beq      gl_s_right
+gl_sc_left     tst.b    2(a5)
+               beq      gl_s_right
+               subi.b   #1,2(a5)
+               addi.b   #1,0(a5)
+
+gl_s_right     cmpi.b   #11,0(a5)
+               bgt      gl_sc_right
+               cmpi.b   #9,0(a5)
+               blt      gl_s_up
+               tst.b    d3
+               beq      gl_s_up
+gl_sc_right    cmpi.b   #18,2(a5)
+               beq      gl_s_up
+               addi.b   #1,2(a5)
+               subi.b   #1,0(a5)
+
+gl_s_up        cmpi.b   #2,1(a5)
+               blt      gl_sc_up
+               cmpi.b   #3,1(a5)
+               bgt      gl_s_down
+               tst.b    d3
+               beq      gl_s_down
+gl_sc_up       tst.b    3(a5)
+               beq      gl_s_down
+               subi.b   #1,3(a5)
+               addi.b   #1,1(a5)
+
+gl_s_down      cmpi.b   #10,1(a5)
+               bgt      gl_sc_down
+               cmpi.b   #8,1(a5)
+               blt      gl_s_out
+               tst.b    d3
+               beq      gl_s_out
+gl_sc_down     cmpi.b   #20,3(a5)
+               beq      gl_s_out
+               addi.b   #1,3(a5)
+               subi.b   #1,1(a5)
+
+gl_s_out       nop
+               bra      game_loop
+
+gl_dead        tst.b    41(a5)
+               bne      gl_care
+               lea      time_mess,a2
+               jsr      do_message
+gl_care        subq.b   #1,5(a5)
+               tst.b    5(a5)
+               beq      game_over
+               lea      care_noise,a3
+               jsr      make_noise
+               lea      dead_mess,a2
+               jsr      do_message
+               jsr      wait_key
+               bra      game_init
+game_over      lea      over_mess,a2
+               jsr      do_message
+               lea      over_noise,a3
+               jsr      make_noise
+               jsr      wait_key
+               rts
+
+care_noise     dc.w     $0a08,$0000,$aaaa
+               dc.b     $01,$32,$2c,$01,$10,$27,$10,$00,$ff,$00
+
+over_noise     dc.w     $0a08,$0000,$aaaa
+               dc.b     $32,$64,$2c,$02,$20,$6e,$10,$00,$ff,$00
+
+gl_calc        clr.l    d7
+               move.b   3(a5),d7
+               lsl.w    #5,d7
+               clr.l    d2
+               move.b   2(a5),d2
+               add.w    d7,d2
+               add.l    8(a5),d2
+               rts
+
+gl_test        andi.b   #$3f,d2    * Test for things you can walk into
+               bne      gl_talt
+               rts
+gl_talt        cmpi.b   #2,d2
+               bne      gl_texit
+               clr.b    d2
+               rts
+gl_texit       tst.b    40(a5)
+               bne      gl_tdia
+               cmpi.b   #6,d2
+               bne      gl_tdia
+               move.b   #$ff,53(a5)
+gl_tdia        andi.b   #$3c,d2
+               cmpi.b   #8,d2
+               beq      gl_getdia
+               rts
+gl_getdia      clr.w    d2
+               move.b   57(a5),d2
+               add.w    d2,6(a5)
+               tst.b    40(a5)
+               bne      gl_anddec
+               rts
+gl_anddec      subi.b   #1,40(a5)
+               tst.b    54(a5)      * Secret exit?
+               beq      gl_ad_out
+               tst.b    40(a5)
+               bne      gl_ad_out
+               movea.l  8(a5),a1
+               clr.l    d2
+               move.b   55(a5),d2
+               lsl.w    #5,d2
+               add.b    54(a5),d2
+               adda.l   d2,a1
+               move.b   #6,(a1)
+gl_ad_out      clr.b    d2
+               rts
+
+gl_score       clr.l    d7
+               move.w   6(a5),d7
+               tst.w    d7
+               beq      gs_print
+               divu     #500,d7
+               cmp.b    58(a5),d7
+               beq      gs_print
+gs_xtra        addi.b   #1,5(a5)
+               move.b   d7,58(a5)
+               jsr      disp_lives
+gs_print       clr.l    d7          * Do the score
+               move.w   6(a5),d7
+               move.b   #4,d6
+               move.b   #4,d2
+               move.b   #112,d3
+               jmp      do_number
+
+gl_diamon      clr.l    d7
+               move.b   40(a5),d7
+               move.b   #2,d6
+               move.b   #30,d2
+               move.b   #112,d3
+               jmp      do_number
+
+gl_time        tst.b    pause_off(a5)
+               beq      gl_show_time
+               rts
+
+gl_show_time   cmpi.b   #frames_per_sec,time_delay_off(a5)
+               bge      gt_dec
+               rts
+gt_dec         clr.b    time_delay_off(a5)
+               tst.b    41(a5)
+               bne      gt_print
+               rts
+gt_print       subq.b   #1,41(a5)
+               clr.l    d7
+               move.b   41(a5),d7
+               cmpi.b   #10,d7
+               bhi      gt_pcont
+               move.b   #$5,61(a5)     * Flag for noise
+gt_pcont       move.b   #2,d6
+               move.b   #26,d2
+               move.b   #0,d3
+               jmp      do_number
+
+disp_lives     clr.l    d4                * Display the lives
+               move.b   5(a5),d4
+               cmpi.b   #8,d4
+               ble      dl_fine
+               move.b   #8,d4
+dl_fine        addi.b   #32,d4
+               lsl.w    #7,d4
+               add.l    36(a5),d4
+               move.b   #50,d2
+               move.b   #112,d3
+               jmp      put_block
+
+
+*--------------------------------------------------------------------------*
+*  Done_level - finished a level, get the next one!
+*
+
+done_level     tst.b    41(a5)      * Add time left to score
+               beq      dl_next
+               jsr      gt_dec
+               addi.w   #2,6(a5)
+               jsr      gl_score
+               move.l   #2,d1
+               add.l    timer_off(a5),d1
+dl_slow        cmp.l    timer_off(a5),d1
+               bgt      dl_slow
+
+               lea      done_noise,a3
+               move.b   41(a5),6(a3)
+               jsr      make_noise
+               bra      done_level
+
+dl_next        move.b   50(a5),d1
+               bclr     #3,d1
+               bne      dl_secnd
+               bset     d1,68(a5)
+               bra      dl_join
+dl_secnd       bset     d1,69(a5)
+dl_join        addi.b   #1,50(a5)   * Next level
+               cmpi.b   #16,50(a5)
+               bne      dl_not_all
+               cmpi.w   #$ffff,68(a5)
+               bne      dl_not_all
+               jsr      clear_screen
+               lea      cong_messg,a2
+               jsr      do_message
+               lea      cong_noise,a3
+               jsr      make_noise
+               jsr      wait_key
+dl_not_all     andi.b   #$0f,50(a5)
+               jsr      so_clear
+               bra      game_init
+
+done_noise     dc.w     $0a08,$0000,$aaaa
+               dc.b     $80,$00,$00,$00,$00,$02,$00,$00,$ff,$00
+
+cong_noise     dc.w     $0a08,$0000,$aaaa
+               dc.b     $01,$32,$2c,$02,$10,$27,$e0,$00,$ff,$00
+
+cong_messg     dc.w     2,20,3,15,14,7,18,1,20,21,12,1,20,9,15,14,19,$fe
+               dc.w     16,30,25,15,21,0,8,1,22,5,$fe
+               dc.w     14,40,3,15,13,16,12,5,20,5,4,$fe
+               dc.w     14,50,18,15,3,11,28,6,1,12,12,$fe
+               dc.w     6,65,23,1,20,3,8,0,15,21,20,0,6,15,18,$fe
+               dc.w     4,75,15,20,8,5,18,0,16,18,15,7,18,1,13,19,$fe
+               dc.w     24,85,6,18,15,13,$fe
+               dc.w     8,95,1,14,4,18,5,23,0,20,15,15,14,5
+               dc.w     $ff
+
+*--------------------------------------------------------------------------*
+* Sounds  - Do sounds appropriate for game
+*
+
+sounds         clr.l    d0
+               tst.b    66(a5)
+               beq      so_clear
+so_loop        tst.b    60(a5,d0.w)
+               bne      so_do_it
+               addq.w   #1,d0
+               cmpi.w   #$6,d0
+               bne      so_loop
+               rts
+so_do_it       lea      sound_tabl,a3
+               lsl.w    #4,d0
+               adda.l   d0,a3
+               moveq    #$11,d0
+               trap     #1
+so_clear       clr.l    60(a5)
+               clr.w    64(a5)
+               rts
+
+sound_tabl     dc.w     $0a08,$0000,$aaaa
+               dc.b     $01,$32,$2c,$01,$10,$27,$e0,$00,$ff,$00   * Enuf dia
+               dc.w     $0a08,$0000,$aaaa
+               dc.b     $05,$00,$00,$00,$00,$05,$00,$00,$ff,$00   * Time-up
+               dc.w     $0a08,$0000,$aaaa
+               dc.b     $01,$00,$00,$00,$00,$01,$00,$00,$ff,$00   * Diamond
+               dc.w     $0a08,$0000,$aaaa
+               dc.b     $f0,$00,$00,$00,$00,$03,$00,$03,$ff,$00   * Rock
+               dc.w     $0a08,$0000,$aaaa
+               dc.b     $c0,$00,$00,$00,$00,$02,$00,$00,$ff,$00   * Man
+               dc.w     $0a08,$0000,$aaaa
+               dc.b     $00,$00,$00,$01,$00,$02,$a0,$a0,$ff,$00   * Amoeba
+
+*--------------------------------------------------------------------------*
+*  Make_noise  - Makes a noise only if sound is on
+*
+
+make_noise     tst.b    66(a5)
+               bne      mn_fine
+               rts
+mn_fine        moveq    #$11,d0
+               trap     #1
+               rts
+
+*--------------------------------------------------------------------------*
+*  Test_key  - returns the result of keyrow(1) in d1.b
+*
+*
+
+test_key       lea      keybd,a3
+               move.l   #$09010000,(a3)
+               move.l   #$00000102,4(a3)
+               moveq    #17,d0
+               trap     #1
+               rts
+
+*--------------------------------------------------------------------------*
+*  Wait_key  - waits for a key press
+*
+
+wait_key       jsr      test_key
+               tst.b    d1
+               bne      wait_key
+wk_second      jsr      test_key
+               tst.b    d1
+               beq      wk_second
+               rts
+
+*--------------------------------------------------------------------------*
+*  Rep_key  - Waits for a key with auto repeat
+*
+
+rep_key        move.w   #$8000,d2
+
+rk_loop        jsr      test_key
+               move.l   #8,d3
+               add.l    timer_off(a5),d3
+rk_slow        cmp.l    timer_off(a5),d3
+               bgt      rk_slow
+               tst.b    d1
+               dbne     d2,rk_loop
+rk_second      jsr      test_key
+               tst.b    d1
+               beq      rk_second
+               move.b   d1,d2       * Preserve d1
+               lea      key_noise,a3
+               jsr      make_noise
+               move.b   d2,d1
+               rts
+
+key_noise      dc.w     $0a08,$0000,$aaaa
+               dc.b     $00,$00,$00,$00,$00,$01,$00,$00,$ff,$00
+
+*--------------------------------------------------------------------------*
+*  Clear_screen  - clears the screen
+*
+
+clear_screen   move.w   #$1fff,d1
+               movea.l  #screen,a2
+cs_loop        clr.l    (a2)+
+               dbf      d1,cs_loop
+               rts
+
+*--------------------------------------------------------------------------*
+*  Do_number  - Displays d7.w  to d6.b digits (up to 5)
+*               at d2.b=x,d3.b=y on screen
+*
+*               Uses d0,d1,d2,d3,d4,d6,d7,a0,a1,a2
+
+do_number      cmpi.b   #6,d6
+               blt      dn_it
+               rts
+dn_it          lsl.b    #2,d6
+               andi.w   #$ff,d6
+               lea      dn_table,a2
+dn_loop        move.l   0(a2,d6.w),d0
+               move.l   d7,d4
+               tst.w    d0
+               bne      dn_fine
+               addq.w   #1,d0
+dn_fine        divu     d0,d4
+               mulu     d4,d0
+               sub.l    d0,d7
+               andi.l   #$f,d4
+               addi.b   #32,d4
+               lsl.w    #7,d4
+               add.l    36(a5),d4
+               movem.l  d2-d3,-(a7)
+               jsr      put_block
+               movem.l  (a7)+,d2-d3
+               addq.b   #4,d2
+               subq.b   #4,d6
+               bcc      dn_loop
+               rts
+
+dn_table       dc.l  1,10,100,1000,10000,100000,1000000,10000000
+
+*--------------------------------------------------------------------------*
+*  Do_message  - displays a messsage stored at (a2.l) on screen
+*
+*
+
+D_end    equ   $ff      *  The end of a message
+D_at     equ   $fe      *  Following two words are x and y co-ordinates
+D_num    equ   $fd      *  Following word is a number
+D_carr   equ   $fc      *  Carriage return
+D_grap   equ   $fb      *  Following word is a graphic character
+
+do_message     move.w   (a2)+,d2
+               move.w   (a2)+,d3
+dm_loop        clr.l    d4
+               move.w   (a2)+,d4
+               cmpi.b   #D_at,d4
+               beq      do_message
+               cmpi.b   #D_num,d4
+               bne      dm_not_num
+               clr.l    d7
+               move.w   (a2)+,d7
+               move.b   #4,d6
+               move.l   a2,-(a7)
+               jsr      do_number
+               move.l   (a7)+,a2
+               bra      dm_loop
+dm_not_num     cmpi.b   #D_carr,d4
+               bne      dm_not_nxt
+               move.w   #6,d2
+               addi.w   #10,d3
+               bra      dm_loop
+dm_not_nxt     cmpi.b   #D_grap,d4
+               bne      dm_not_grap
+               move.w   (a2)+,d4
+               lsl.w    #7,d4
+               add.l    12(a5),d4
+               bra      dm_print
+dm_not_grap    cmpi.b   #D_end,d4
+               bne      dm_fine
+               rts
+dm_fine        lsl.w    #7,d4
+               add.l    36(a5),d4
+dm_print       movem.l  d1-d3,-(a7)
+               jsr      put_block
+               movem.l  (a7)+,d1-d3
+               addq.b   #4,d2
+               bra      dm_loop
+
+ready_mess  dc.w  18,50,18,5,1,4,25,0,30,D_end
+dead_mess   dc.w  16,50,3,1,18,5,6,21,12,31,D_end
+over_mess   dc.w  14,50,7,1,13,5,0,15,22,5,18,D_end
+time_mess   dc.w  18,60,20,9,13,5,0,21,16,D_end
+fini_mess   dc.w  4,0,28,28,28,28,28,28,28,28,28,28,28,28,28,28,D_end
+
+menu_mess   dc.w  14,10,18,15,3,11,28,6,1,12,12,D_at     * 'Rock-fall'
+            dc.w  18,22,12,5,22,5,12,0,1,D_at            * 'Level A'
+            dc.w  4,32,19,16,1,3,5,0,20,15,0,19,20,1,18,20,D_at
+            dc.w  6,50
+high_score  dc.w  18,15,3,11,0,0,0,0,D_num,1000,D_carr  * High scores
+            dc.w  0,6,1,12,12,0,0,0,D_num,900,D_carr
+            dc.w  18,15,3,11,0,0,0,0,D_num,800,D_carr
+            dc.w  0,6,1,12,12,0,0,0,D_num,700,D_carr
+            dc.w  18,15,3,11,0,0,0,0,D_num,600,D_carr
+            dc.w  D_end
+
+itsa_mess   dc.w  12,40,23,5,12,12,0,4,15,14,5,31,D_at    * 'Well done!'
+            dc.w  4,50,14,5,23,0,8,9,7,8,0,19,3,15,18,5,D_at
+            dc.w  2,70,5,14,20,5,18,0,25,15,21,18,0,14,1,13,5,D_at
+            dc.w  18,85,1,1,1,1,1,1,1,D_at
+            dc.w  18,93,28,0,0,0,0,0,0,D_end
+            dc.w  0
+
+credit_mess dc.w  8,104,18,15,3,11,28,6,1,12,12,0,2,25
+            dc.w  D_at,12,116,1,14,4,25,0,20,15,15,14,5,D_end
+*        Rock-fall by Andy Toone
+            dc.w  10,104,23,18,9,20,20,5,14,0,6,15,18
+            dc.w  D_at,8,116,3,7,8,0,19,5,18,22,9,3,5,19,D_end
+*        Written for CGH Services
+            dc.w  10,104,4,9,7,0,20,8,18,15,21,7,8
+            dc.w  D_at,8,116,20,8,5,0,4,9,18,20,0,28,0,D_grap,2,D_end
+*        Dig through the dirt
+            dc.w  10,104,3,15,12,12,5,3,20,0,20,8,5
+            dc.w  D_at,8,116,4,9,1,13,15,14,4,19,0,28,0,D_grap,8,D_end
+*        Collect the diamonds - <>
+            dc.w  6,104,1,22,15,9,4,0,6,1,12,12,9,14,7
+            dc.w  D_at,14,116,18,15,3,11,19,0,28,0,D_grap,4,D_end
+*        Avoid falling rocks - O
+            dc.w  6,104,23,8,5,14,0,25,15,21,0,8,1,22,5
+            dc.w  D_at,2,116,5,14,15,21,7,8,0,4,9,1,13,15,14,4,19,D_end
+*        When you have enough diamonds
+            dc.w  14,104,12,5,1,22,5,0,22,9,1
+            dc.w  D_at,8,116,20,8,5,0,5,24,9,20,0,28,0,D_grap,6,D_end
+*        Leave via the exit
+            dc.w  10,104,13,15,14,19,20,5,18,19,0,D_grap,12,D_grap,16
+            dc.w  D_at,14,116,3,8,1,19,5,0,25,15,21,D_end
+*        Monsters chase you
+            dc.w  8,104,1,13,15,5,2,1,0,7,18,15,23,19
+            dc.w  D_at,4,116,20,8,18,15,21,7,8,0,4,9,18,20,0,D_grap,20,D_end
+*        Amoeba grows through dirt
+            dc.w  8,104,20,8,5,0,18,5,19,20,0,25,15,21
+            dc.w  D_at,6,116,13,21,19,20,0,4,9,19,3,15,22,5,18,D_end
+*        The rest you must discover
+            dc.w  6,110,D_grap,24,0,7,15,15,4,0,12,21,3,11,0,D_grap,28,D_end
+*        Good luck
+            dc.w  D_end
+
+mt_alchp equ $18  # Allocate heap
+mt_rechp equ $19  # Release heap
+mt_lpoll equ $1c  # Link 50/60Hz interrupt rtn
+mt_rpoll equ $1d  # Release interrupt rtn
+
+*--------------------------------------------------------------------------*
+* Menu  - Main menu for game
+*         d2= Table address, d3= Graphics address, d4= Text address
+*
+
+menu           lea      data_space,a5
+               move.l   d2,46(a5)
+               move.l   d3,12(a5)
+               move.l   d4,36(a5)
+
+               move.l   #1030,d1        * Allocate space for table
+               move.l   #-1,d2
+               moveq    #mt_alchp,d0
+               trap     #1
+               cmp.l    #1030,d1
+               bge      menu_got
+               rts
+menu_got       move.l   a0,table_off(a5)
+
+               lea      poll_link,a0  * Link interrupt routine
+               lea      poll_routine,a2
+               move.l   a2,4(a0)
+               moveq    #mt_lpoll,d0
+               trap     #1
+
+               clr.b    level_off(a5)
+               move.b   #$ff,66(a5)
+menu_join      andi.b   #$0c,level_off(a5) * Only every four levels
+               jsr      clear_screen
+               jsr      so_clear           * Silence
+menu_redraw    lea      menu_mess,a2
+               move.b   level_off(a5),41(a2)
+               addi.w   #1,40(a2)
+               jsr      do_message
+menu_restart   lea      credit_mess,a2
+menu_n_mess    clr.w    d2
+               move.b   #104,d3
+               jsr      Calc_scr
+               move.w   #1408,d2
+menu_clear     clr.l    (a1)+
+               dbra     d2,menu_clear
+
+               jsr      do_message
+
+               move.l   #20,d2            * Wait a fraction after refresh
+               add.l    timer_off(a5),d2
+menu_pause     cmp.l    timer_off(a5),d2
+               bgt      menu_pause
+
+               move.w   #60,d7
+
+menu_scr1      move.w   d7,-(sp)          * Main menu loop
+               jsr      test_key
+               move.w   (sp)+,d7
+               tst.b    d1
+               bne      menu_pressed
+
+               move.l   #2,d2
+               add.l    timer_off(a5),d2
+menu_delay     cmp.l    timer_off(a5),d2
+               bgt      menu_delay
+
+               sub.w    #1,d7
+               cmp.w    #40,d7
+               bgt      menu_scr1
+
+               clr.w    d2
+               move.b   #104,d3
+               jsr      Calc_scr
+               move.w   #1408,d2
+menu_scroll    move.l   128(a1),(a1)+
+               dbra     d2,menu_scroll
+
+               tst.w    d7
+               bne      menu_scr1
+               cmpi.w   #$ff,(a2)
+               beq      menu_restart
+               bra      menu_n_mess
+
+menu_pressed   btst     #3,d1
+               beq      menu_t2
+               movea.l  table_off(a5),a0
+               moveq    #mt_rechp,d0
+               trap     #1
+
+               lea      poll_link,a0
+               moveq    #mt_rpoll,d0
+               trap     #1
+               rts                        * Exit game
+
+menu_t2        btst     #6,d1             * Space: Start game
+               beq      menu_t3
+               jsr      game_start
+               lea      high_score,a2
+               move.w   #88,d1
+               move.w   6(a5),d3
+               cmp.w    18(a2,d1.w),d3
+               blt      menu_join
+mt_loop        subi.w   #22,d1
+               cmp.w    18(a2,d1.w),d3
+               blt      got_it
+               tst.w    d1
+               bne      mt_loop
+               clr.w    d3
+got_it         move.w   #87,d0
+gil_lop        move.b   0(a2,d0.w),22(a2,d0.w)
+               subi.w   #1,d0
+               cmp.w    d0,d1
+               bne      gil_lop
+               tst.w    d3
+               beq      gil_dont
+               addi.w   #22,d0               * d0 points to entry
+gil_dont       move.w   6(a5),18(a2,d0.w)    * Copy score across
+               movem.l  d0/a2,-(a7)          * And save the pointers
+               jsr      clear_screen
+               clr.b    56(a5)
+               lea      itsa_mess,a2
+               move.w   #6,d1
+               clr.w    d2
+gi_lop2        move.w   #$0001,100(a2,d2.w)
+               clr.w    120(a2,d2.w)
+               addi.w   #2,d2
+               dbf      d1,gi_lop2
+               move.w   #28,120(a2)
+gi_inp         jsr      do_message
+               jsr      rep_key
+               lea      itsa_mess,a2
+               clr.w    d0
+               btst     #6,d1
+               bne      gi_copy
+               btst     #4,d1
+               beq      git_t2
+               cmpi.b   #12,56(a5)
+               beq      git_t2
+               addi.b   #2,56(a5)
+               move.b   56(a5),d0
+               move.l   #$0000001c,118(a2,d0.w)
+               bra      gi_inp
+git_t2         btst     #1,d1
+               beq      git_t3
+               tst.b    56(a5)
+               beq      git_t3
+               subi.b   #2,56(a5)
+               move.b   56(a5),d0
+               move.l   #$001c0000,120(a2,d0.w)
+               bra      gi_inp
+git_t3         btst     #7,d1
+               beq      git_t4
+               move.b   56(a5),d0
+               tst.w    100(a2,d0.w)
+               beq      git_t4
+               subi.w   #1,100(a2,d0.w)
+               bra      gi_inp
+git_t4         btst     #2,d1
+               beq      gi_inp
+               move.b   56(a5),d0
+               cmpi.w   #31,100(a2,d0.w)
+               beq      gi_inp
+               addi.w   #1,100(a2,d0.w)
+               bra      gi_inp
+gi_copy        movem.l  (a7)+,d0/a1
+               move.w   #6,d2
+gc_loop        move.w   100(a2),0(a1,d0.w)
+               addq.l   #2,a2
+               addq.l   #2,a1
+               dbf      d2,gc_loop
+               bra      menu_join
+
+menu_t3        btst     #1,d1                * Left: Down level
+               beq      menu_t4
+               tst.b    level_off(a5)
+               beq      menu_t4
+               subi.b   #4,level_off(a5)
+               bra      menu_redraw
+menu_t4        btst     #4,d1                * Right: Up level
+               beq      menu_t5
+               cmpi.b   #12,level_off(a5)
+               beq      menu_scr1
+               addi.b   #4,level_off(a5)
+               bra      menu_redraw
+menu_t5        btst     #5,d1                * ????: Sound on/off
+               beq      menu_scr1
+               lea      menu_mess,a1
+               tst.b    66(a5)
+               bne      m_sound_off
+               move.b   #$ff,66(a5)
+               move.w   #28,12(a1)
+               bra      menu_redraw
+m_sound_off    clr.b    66(a5)
+               clr.w    12(a1)
+               bra      menu_redraw
+
+*--------------------------------------------------------------------------*
+* Interrupt routine
+*
+poll_routine   lea      data_space,a0
+               addi.l   #1,timer_off(a0)
+               addi.b   #1,time_delay_off(a0)
+               rts
+
+poll_link      dc.l  0     * Pointer to next link
+               dc.l  0     * Address of routine
+
+*--------------------------------------------------------------------------*
+*  Random - returns a random number
+*
+*        Exit : d7.w=random
+*
+
+random         move.w   34(a5),d7
+               mulu     #109,d7
+               addi.w   #113,d7
+               move.w   d7,34(a5)
+               rts
+
+*--------------------------------------------------------------------------*
+*  Modulus - returns d7 mod d6
+*       Entry:        d7.w  d6.w    Two numbers
+*       Exit :        d7.l=d7 mod d6
+*
+
+modulus        tst.w    d6
+               bne      mo_cont
+               rts
+mo_cont        divu     d6,d7
+               clr.w    d7
+               swap     d7
+               rts
+
+
+               END
